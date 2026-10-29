@@ -1,0 +1,17 @@
+{
+  "name": "codetree",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/web"],
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "npm run dev --workspace apps/web",
+    "dev:api": "go run ./cmd/api",
+    "build": "npm run build --workspace apps/web",
+    "typecheck": "npm run typecheck --workspace apps/web",
+    "test": "go test ./... && node --test services/typescript/analyze.test.mjs",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": { "typescript": "~5.9.3" },
+  "devDependencies": { "@playwright/test": "^1.56.1" }
+}

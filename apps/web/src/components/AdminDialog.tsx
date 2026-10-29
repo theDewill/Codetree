@@ -1,0 +1,38 @@
+import { useEffect, useState, type FormEvent } from 'react';
+import { ArrowLeft, Check, Cpu, FlaskConical, KeyRound, LoaderCircle, Pencil, Plus, Power, Save, ShieldCheck, Sparkles, Trash2 } from 'lucide-react';
+import { api } from '../lib/api';
+import type { Model } from '../lib/types';
+import { Modal } from './Modal';
+
+type Draft = { id: string; name: string; provider: string; modelId: string; baseUrl: string; keyEnv: string; apiKey: string; enabled: boolean; contextLimit: number };
+const emptyDraft: Draft = { id: '', name: '', provider: 'openai', modelId: '', baseUrl: 'https://api.openai.com/v1', keyEnv: '', apiKey: '', enabled: true, contextLimit: 32000 };
+function draft(model: Model): Draft { return { id: model.id, name: model.name, provider: model.provider, modelId: model.modelId, baseUrl: model.baseUrl || '', keyEnv: model.keyEnv || '', apiKey: '', enabled: model.enabled, contextLimit: model.contextLimit }; }
+
+export function AdminDialog({ onClose, onChanged }: { onClose: () => void; onChanged: () => Promise<void> }) {
+  const [models, setModels] = useState<Model[]>([]), [editing, setEditing] = useState<Draft | null>(null), [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState('');
+  async function load() { const result = await api<Model[]>('/admin/models'); setModels(result); }
+  useEffect(() => { load().catch(error => setError(error.message)); }, []);
+  async function save(event: FormEvent) {
+    event.preventDefault(); if (!editing) return; setBusy('save'); setError(''); setNotice('');
+    try { await api('/admin/models', { method: 'POST', body: JSON.stringify(editing) }); await load(); await onChanged(); setEditing(null); setNotice('Model saved. Enabled models are available in the dock.'); } catch (error) { setError((error as Error).message); } finally { setBusy(''); }
+  }
+  async function action(model: Model, kind: 'toggle' | 'test' | 'delete') {
+    setBusy(model.id); setError(''); setNotice('');
+    try {
+      if (kind === 'toggle') await api('/admin/models', { method: 'POST', body: JSON.stringify({ ...draft(model), enabled: !model.enabled }) });
+      if (kind === 'delete') await api(`/admin/models/${model.id}`, { method: 'DELETE' });
+      if (kind === 'test') { const result = await api<{ message: string }>(`/admin/models/${model.id}/test`, { method: 'POST' }); setNotice(result.message); }
+      await load(); await onChanged();
+    } catch (error) { setError((error as Error).message); } finally { setBusy(''); }
+  }
+  function update<K extends keyof Draft>(key: K, value: Draft[K]) { setEditing(previous => previous ? { ...previous, [key]: value } : previous); }
+  return <Modal title="The intelligence behind the map." subtitle="Developer console · configure the models available to your users." onClose={onClose} wide>
+    <div className="admin-banner"><ShieldCheck size={17} /><span>Credentials stay on the server. Model access is enforced by the Go API.</span><span className="badge">DEVELOPER</span></div>
+    {error && <div className="form-error" role="alert">{error}</div>}{notice && <div className="form-success" role="status"><Check size={15} />{notice}</div>}
+    {editing ? <form className="form-stack model-form" onSubmit={save}><button className="text-button" type="button" onClick={() => setEditing(null)}><ArrowLeft size={14} />All models</button><div className="form-grid"><label>Display name<input autoFocus value={editing.name} onChange={event => update('name', event.target.value)} placeholder="e.g. My reasoning model" required maxLength={80} /></label><label>Provider adapter<select value={editing.provider} onChange={event => update('provider', event.target.value)}><option value="openai">OpenAI</option><option value="openai-compatible">OpenAI-compatible</option></select></label></div><label>Provider model ID<input value={editing.modelId} onChange={event => update('modelId', event.target.value)} placeholder="Exact model ID from your provider" required /></label><label>API base URL<input type="url" value={editing.baseUrl} onChange={event => update('baseUrl', event.target.value)} placeholder="https://provider.example/v1" required /></label><div className="form-grid"><label><span><KeyRound size={13} />API key</span><input type="password" autoComplete="off" value={editing.apiKey} onChange={event => update('apiKey', event.target.value)} placeholder={editing.id ? 'Leave blank to keep existing key' : 'Enter a server-side API key'} /></label><label>Or environment variable<input value={editing.keyEnv} onChange={event => update('keyEnv', event.target.value)} placeholder="PROVIDER_API_KEY" /></label></div><div className="form-grid"><label>Context limit (tokens)<input type="number" min={4096} max={1000000} value={editing.contextLimit} onChange={event => update('contextLimit', Number(event.target.value))} required /></label><label className="checkbox-field"><input type="checkbox" checked={editing.enabled} onChange={event => update('enabled', event.target.checked)} />Available to users</label></div><div className="model-form-note">A connection test sends one short request to your provider and may incur a small API charge. Adding a different API protocol requires a new backend adapter.</div><button className="button primary" disabled={!!busy}>{busy ? <LoaderCircle size={15} className="spin" /> : <Save size={15} />}Save model</button></form> : <>
+      <div className="admin-list-heading"><span className="section-label">MODEL REGISTRY<span>{models.length}</span></span><button className="button primary compact" onClick={() => { setEditing({ ...emptyDraft }); setError(''); setNotice(''); }}><Plus size={14} />Add model</button></div>
+      <div className="model-list">{models.map(model => <div key={model.id} className="admin-model"><span className={`admin-model-icon ${model.provider === 'local' ? 'local' : ''}`}>{model.provider === 'local' ? <BracesIcon /> : <Cpu size={21} />}</span><div className="admin-model-info"><strong>{model.name}<span className={`model-state ${model.enabled && model.configured ? 'enabled' : ''}`}>{model.enabled ? model.configured ? 'Enabled' : 'Needs key' : 'Disabled'}</span></strong><span>{model.provider === 'local' ? 'Local structural analysis · no LLM' : `${model.provider} · ${model.modelId}`}</span><small>{model.contextLimit.toLocaleString()} context · {model.provider === 'local' ? 'Built in' : 'Server-side credentials'}</small></div><div className="model-actions"><button className="icon-button" title="Test connection (may use API credits)" aria-label={`Test ${model.name}`} disabled={!!busy} onClick={() => action(model, 'test')}>{busy === model.id ? <LoaderCircle size={16} className="spin" /> : <FlaskConical size={16} />}</button>{model.provider !== 'local' && <><button className="icon-button" title="Edit model" aria-label={`Edit ${model.name}`} onClick={() => { setEditing(draft(model)); setError(''); }}><Pencil size={15} /></button><button className="icon-button" title={model.enabled ? 'Disable model' : 'Enable model'} aria-label={`${model.enabled ? 'Disable' : 'Enable'} ${model.name}`} disabled={!!busy} onClick={() => action(model, 'toggle')}><Power size={16} /></button><button className="icon-button danger" title="Delete model" aria-label={`Delete ${model.name}`} disabled={!!busy} onClick={() => action(model, 'delete')}><Trash2 size={15} /></button></>}</div></div>)}</div><div className="admin-note"><Sparkles size={18} /><span>Add a provider model to unlock AI reasoning. The built-in source guide remains available without credentials.</span></div>
+    </>}
+  </Modal>;
+}
+function BracesIcon() { return <span className="mono">{'{ }'}</span>; }
